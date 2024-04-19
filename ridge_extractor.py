@@ -1,8 +1,8 @@
 from skimage.measure import  CircleModel, ransac
 from skimage.exposure import equalize_adapthist
-from scipy.ndimage import shift
 from sklearn.cluster import KMeans
 import numpy as np
+import numba as nb
 import diplib as dip
 import tifffile
 from fractions import Fraction
@@ -49,75 +49,127 @@ def _radial_profile(image:np.ndarray, center:tuple, pixelscale:tuple[float], max
     x_ax = x_ax * np.mean(pixelscale)
     return np.vstack((x_ax,prof)) 
 
-def _bresenhams_algorithm(origin, angle, radius):
-    def plotLine(x0, y0, x1, y1):
-        dx = abs(x1 - x0)
-        sx = 1 if x0 < x1  else -1
-        dy = -abs(y1 - y0)
-        sy = 1 if y0 < y1 else -1
-        error = dx + dy
+# @nb.njit(cache=True)
+def _pixels_along_line(x1, y1, angle, radius) -> np.ndarray:
+    x2 = int(round(x1 + radius * np.cos(angle)))
+    y2 = int(round(y1 + radius * np.sin(angle)))    
+    # bresenham algorithm
+    # from https://de.wikipedia.org/wiki/Bresenham-Algorithmus modified c code
+    x,y = x1,y1
+    dx = abs(x2 - x1)
+    sx = np.sign(x2 - x1)
+    dy = abs(y2 -y1)
+    sy = np.sign(y2 - y1)
 
-        line_idxs = list()
-        
-        while True:
-            line_idxs.append((x0, y0))
-            if x0 == x1 and y0 == y1: break
-            e2 = 2 * error
-            if e2 >= dy:
-                if x0 >= x1: break
-                error = error + dy
-                x0 = x0 + sx
-            if e2 <= dx:
-                if y0 == y1: break
-                error = error + dx
-                y0 = y0 + sy
-        return line_idxs
+    if dx == 0:
+        if sy < 0: 
+            start, stop = y2,y1
+        else:
+            start, stop = y1,y2
+        y_coordinates = np.arange(start, stop)
+        x_coordinates = x1*np.ones((dy,), dtype=np.int32) 
+        return np.vstack([x_coordinates, y_coordinates])
+
+    if dy == 0:
+        if sx < 0:
+            start, stop = x2,x1
+        else:
+            start, stop = x1,x2
+        x_coordinates = np.arange(start, stop)
+        y_coordinates = y1*np.ones((dx,), dtype=np.int32) 
+        return np.vstack([x_coordinates, y_coordinates])
     
-    x0, y0 = origin
-    x1 = int(round(x0 + radius * np.cos(angle)))
-    y1 = int(round(y0 + radius * np.sin(angle)))
-    return plotLine(x0, y0, x1, y1)
+    if dx > dy:
+        pdx, pdy, dfd, dsd = sx, 0, dx, dy
+    else:
+        pdx, pdy, dfd, dsd = 0, sy, dy, dx
 
+    err = dfd/2
+    # Initialize the plotting points
+    xcoordinates = list()
+    ycoordinates = list()
 
+    xcoordinates.append(x1)
+    ycoordinates.append(y1)
+
+    x = x1
+    y = y1
+
+    for _ in range(dfd):
+        err -= dsd
+        if err < 0:
+            err += dfd
+            x += sx
+            y += sy
+        else:   
+            x += pdx
+            y += pdy
+        xcoordinates.append(x)
+        ycoordinates.append(y)
+    return np.vstack([xcoordinates, ycoordinates])
+    
+
+# @nb.njit(cache=True, parallel=True)
 def _robust_radial_profile(image:np.ndarray, center:tuple, pixelscale:tuple[float], max_radius:str="inner radius"):
-    angles = np.linspace(0, 2*np.pi, 12)
-    min_radius = np.min([center[0], center[1], image.shape[0]-center[0], image.shape[1]-center[1]])
+    yc,xc = center
+    angles = np.linspace(0, 2*np.pi, 32)
+    # work iwth pixels
+    # work with real dimensions
+    # build 3d data array
+    ycs,xcs = yc*pixelscale[1]*1e6, xc*pixelscale[0]*1e6
+    x_values = np.arange(image.shape[1])*pixelscale[0]*1e6 - xcs
+    y_values = np.arange(image.shape[0])*pixelscale[1]*1e6 - ycs
+
+    x_grid,y_grid = np.meshgrid(x_values, y_values)
+    radial_coord = np.sqrt((x_grid)**2 + (y_grid)**2)
+    # angle_coord = np.arctan2(y_grid, x_grid)
+
+    data = np.concatenate((radial_coord[np.newaxis,:,:], image[np.newaxis,:,:]), axis=0)# angle_coord[np.newaxis,:,:] ,
+
+    # use angles to calculate affected pixels in image, since this is just as effective as using the angular coordinate, but more performant
+    min_radius = np.min([xc, yc, image.shape[0]-yc, image.shape[1]-xc])
     profiles = list()
-    # extract profile for 8 angles
     for angle in angles:
-        poi = np.asarray(_bresenhams_algorithm(center, angle, min_radius)).reshape(2,-1)
+        poi = _pixels_along_line(xc, yc, angle, min_radius)
         poi = poi[:, (poi[0]>=0) & (poi[0]<image.shape[1]) & (poi[1]>=0) & (poi[1]<image.shape[0])]
-
-        z_ax = image[poi[1,:], poi[0,:]]
+        z_ax = data[:, poi[1,:], poi[0,:]]
         profiles.append(z_ax)
-    # shift profiles so that peaks are aligned
-    #furthest_peak_x = np.max([p[0,np.argmax(p[1])] for p in profiles])
-    #for p in profiles:
-    #    p[0] = p[0] - (furthest_peak_x - p[0,np.argmax(p[1])])
-    # align peaks
-    furthest_peak_idx = np.max([np.argmax(p) for p in profiles])
-    shifted_profiles = list()
+
+    #shift profiles so that peaks are aligned
+    furtest_peak_x = np.max([p[0,np.argmax(p[1,:])] for p in profiles])
     for p in profiles:
-        shift =  furthest_peak_idx - np.argmax(p)
-        if shift > 0:
-            shifted_profiles.append(np.concatenate((np.full(shift, p[0]), p[:-shift])))
-        elif shift < 0:
-            shifted_profiles.append(np.concatenate((p[-shift:], np.full(-shift, p[-1]))))
+        p[0,:] = p[0,:] + (furtest_peak_x - p[0,np.argmax(p[1,:])])
 
-    # trim profiles to the shortest length and calculate mean profile
-    shortest_length = np.min([len(p) for p in shifted_profiles])
-    shifted_profiles = np.array([p[:shortest_length] for p in shifted_profiles])
-    z_ax = np.mean(shifted_profiles, axis=0)
-    r_ax = np.arange(len(z_ax))*np.mean(pixelscale)
+    merged_profiles = np.hstack(profiles)
 
-    return np.vstack([r_ax, z_ax])
+    # https://stackoverflow.com/a/21242776/9173710 using bincount for radial profile
+
+    # r = np.round(np.sqrt((data[0,:])**2 + (data[1,:])**2)).astype(int)
+    # tbin = np.bincount(r.ravel(), data[2,:].ravel())
+    # nr = np.bincount(r.ravel())
+    # radial_profile = tbin / nr
+    # plt.plot(radial_profile)
+
+    # using histogram on selected slivces as it supports negative radii
+    r = np.round(merged_profiles[0,:]).astype(int)
+    tbin = np.histogram(r, bins=np.arange(r.min(), r.max()+1), weights=merged_profiles[1,:])[0]
+    nr = np.histogram(r, bins=np.arange(r.min(), r.max()+1))[0]
+    radial_profile = tbin / nr
+    return radial_profile
+
+def find_features(image, kmeans_n_clusters=50, threshold=0.5, use_kmeans=True):
+            
+    points, rim = _rim_from_image(image, kmeans_n_clusters=kmeans_n_clusters, threshold=threshold, use_kmeans=use_kmeans)
+    yc, xc, r, r2 = _estimate_center(points)
+
+    return yc, xc, r, r2, rim
 
         
-def extract_ridge_from_image(image_file: Path, kmeans_n_clusters=50, threshold=0.5, use_kmeans=True):
+def extract_ridge_from_image(image_file, robust=True, kmeans_n_clusters=50, threshold=0.5, use_kmeans=True):
     if isinstance(image_file, str):
         image_file = Path(image_file)
     with tifffile.TiffFile(image_file) as tif:
-        image_grey = tif.asarray()
+        image = tif.asarray()
         ome_metadata = tif.ome_metadata
         metadata = tif.pages[0].tags
         # The TIFF types of the XResolution and YResolution tags are RATIONAL (5)
@@ -125,15 +177,14 @@ def extract_ridge_from_image(image_file: Path, kmeans_n_clusters=50, threshold=0
         xres = Fraction(*metadata["XResolution"].value)*1e6
         yres = Fraction(*metadata["YResolution"].value)*1e6
         pixelscale = (1/xres, 1/yres)
-            
-    points, rim = _rim_from_image(image_grey, kmeans_n_clusters=kmeans_n_clusters, threshold=threshold, use_kmeans=use_kmeans)
 
-    yc, xc, r, r2 = _estimate_center(points)
-    print(f"{image_file.stem} Center: ({yc},{xc}) Radius: {r} R2: {r2}")
+    yc, xc, r, r2, rim = find_features(image, kmeans_n_clusters=kmeans_n_clusters, threshold=threshold, use_kmeans=use_kmeans)
 
-    # radial_profile = _radial_profile(image_grey, (yc,xc), pixelscale, max_radius="inner radius")
-    radial_profile = _robust_radial_profile(image_grey, (yc,xc), pixelscale, max_radius="inner radius")
+    if not robust:
+        radial_profile = _radial_profile(image, (yc,xc), pixelscale, max_radius="inner radius")
+    else: 
+        radial_profile = _robust_radial_profile(image, (yc,xc), pixelscale, max_radius="inner radius")
 
-    return radial_profile, image_grey, (yc,xc,r), rim
+    return radial_profile, image, (yc,xc,r), rim, r2, pixelscale
 
 
