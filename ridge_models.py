@@ -63,7 +63,7 @@ def style_ld_ts(r, gamma, R, upsilon, E, h):
     r = np.asarray(r)
     x_ = (r-R)/h 
     G = E/3       
-    int_out = integrate(_integrand_ld_ts, 0, 1e9, args=(x_[:, np.newaxis],upsilon,E,h))
+    int_out = integrate(_integrand_ld_ts, 0, 1e9, args=(x_[..., np.newaxis],upsilon,E,h))
     return np.asnumpy(gamma/(2*np.pi*G) * int_out)
 
 # ---------------------------------------
@@ -82,13 +82,13 @@ def _integrand_exact(s, r, R, upsilon, E, h):
 
 def style_exact(r, gamma, R, upsilon, E, h):
     r = np.asarray(r)          
-    int_out = integrate(_integrand_exact, 0, 1e7, args=(r[:, np.newaxis],R,upsilon,E,h))
+    int_out = integrate(_integrand_exact, 0, 1e7, args=(r[..., np.newaxis],R,upsilon,E,h))
     return np.asnumpy(gamma * int_out)
 
 
 # ----------------------------------------
 
-def shanahan(x, gamma, R, theta, d, E):
+def shanahan(x, gamma, R, theta, E, d):
     G =E/3
     x = (np.asarray(x)-R)
     x[x==0] = 0.000001
@@ -98,7 +98,7 @@ def shanahan(x, gamma, R, theta, d, E):
     return np.asnumpy(zeta)
 
 
-def limat_symmetric(x, gamma, R, gamma_s, theta, E):
+def limat_symmetric(x, gamma, R, gamma_s, E, theta):
     G= E/3
     x = np.asarray(x)
     l_l = gamma*np.sin(np.deg2rad(theta))/(2*np.pi*G)

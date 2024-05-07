@@ -40,6 +40,14 @@ try:
     if mask_type and not mask_type in ['outliers']:
         print("Error: Mask type unknown! Not producing mask.")
         mask_type = None
+    settings = gwy.gwy_app_settings_get()
+    settings["/module/polylevel/col_degree"] = 4
+    settings["/module/polylevel/do_extract"] = False
+    settings["/module/polylevel/independent"] = 1
+    settings["/module/polylevel/masking"] = 2
+    settings["/module/polylevel/max_degree"] = 4
+    settings["/module/polylevel/row_degree"] = 4
+    settings["/module/polylevel/same_degree"] = True
 
 
     print("Evaluating Surface Data ...")
@@ -63,8 +71,11 @@ try:
             
             
             print("Applying transformations")
+            #leveling plane
+            gwy.gwy_process_func_run("plane_level", container, gwy.RUN_IMMEDIATE)
+            gwy.gwy_process_func_run('polylevel', container, gwy.RUN_IMMEDIATE)
 
-            gwy.gwy_process_func_run('flatten_base', container, gwy.RUN_IMMEDIATE)
+            # gwy.gwy_process_func_run('flatten_base', container, gwy.RUN_IMMEDIATE)
         
             
             data_field = container['/{0}/data'.format(data_field_idx)]
