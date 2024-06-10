@@ -130,7 +130,7 @@ def radial_coord_plane(x_ax, y_ax):
     return radial_plane
 
 # @nb.njit(cache=True, parallel=True)
-def _robust_radial_profile(image:np.ndarray, circ_params:tuple, pixelscale:tuple[float], max_radius:str="inner radius"):
+def _robust_radial_profile(image:np.ndarray, circ_params:tuple, pixelscale:tuple[float], max_rel_diff_to_circle=0.05) -> tuple[np.ndarray, np.ndarray]:
     yc,xc,r = circ_params
     angles = np.linspace(0, 2*np.pi, 32)
 
@@ -162,7 +162,7 @@ def _robust_radial_profile(image:np.ndarray, circ_params:tuple, pixelscale:tuple
     #shift profiles so that peaks are aligned
     # aligning_peak = np.max([p[0,np.argmax(p[1,:])] for p in profiles])
     circle_fit_radius = radial_coord[yc, xc+r] # gets the radius of the circle at the 3 o'clock position, which is at the peak of the profile
-    filtered_profiles = [p for p in profiles if np.isclose(circle_fit_radius, p[0,np.argmax(p[1,:])], rtol=0.05)]
+    filtered_profiles = [p for p in profiles if np.isclose(circle_fit_radius, p[0,np.argmax(p[1,:])], rtol=max_rel_diff_to_circle)]
     # for p in profiles:
     #     p[0,:] = p[0,:] + (aligning_peak - p[0,np.argmax(p[1,:])])
 
@@ -193,7 +193,7 @@ def find_features(image, rim_finder_args):
     return yc, xc, r, r2, rim
 
         
-def extract_ridge_from_image(image_file, robust=True, kmeans_n_clusters=50, threshold=0.5, use_kmeans=True, butterworth_cutoff=0.001, gamma_correction=3):
+def extract_ridge_from_image(image_file, robust=True, kmeans_n_clusters=50, threshold=0.5, use_kmeans=True, butterworth_cutoff=0.001, gamma_correction=3, max_rel_diff_to_circle=0.05):
     if isinstance(image_file, str):
         image_file = Path(image_file)
     with tifffile.TiffFile(image_file) as tif:
@@ -210,9 +210,9 @@ def extract_ridge_from_image(image_file, robust=True, kmeans_n_clusters=50, thre
 
     try:
         if not robust:
-            radial_profile = _radial_profile(image, (yc,xc), pixelscale, max_radius="inner radius")
+            radial_profile = _radial_profile(image, (yc,xc), pixelscale, max_rel_diff_to_circle)
         else: 
-            radial_profile = _robust_radial_profile(image, (yc,xc,r), pixelscale, max_radius="inner radius")
+            radial_profile = _robust_radial_profile(image, (yc,xc,r), pixelscale, max_rel_diff_to_circle)
 
         return radial_profile, image, (yc,xc,r), rim, r2, pixelscale
     except Exception as e:

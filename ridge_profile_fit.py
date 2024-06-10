@@ -3,9 +3,15 @@ import pandas as pd
 from pathlib import Path
 from scipy.optimize import curve_fit
 from data_types import RidgeFit, RidgeFitMethod
-
+from numpy.polynomial.polynomial import Polynomial
 
 from ridge_models import style_exact, style_ld_ts, shanahan, limat_symmetric
+
+def calc_peak_angle(x, y, peak_idx):
+    line_up =  Polynomial.fit(x[peak_idx-4:peak_idx+1], y[peak_idx-4:peak_idx+1], 1).convert().coef[1]
+    line_down = Polynomial.fit(x[peak_idx:peak_idx+5], y[peak_idx:peak_idx+5], 1).convert().coef[1]
+
+    return np.rad2deg(np.arctan2(line_down,1) - np.arctan2(line_up,1))
 
 
 def fit_profile(file, gamma, upsilon, gamma_s, theta, E_lookup, h):
@@ -25,6 +31,8 @@ def fit_profile(file, gamma, upsilon, gamma_s, theta, E_lookup, h):
     peak = np.argmax(defl)
     x_ax += R - x_ax[peak]
 
+    x_peak_ps = x_ax[peak-1:peak+2]
+
     def fit_wrap(func):
         def f(x, p1, p2, p3):
             return func(x, gamma, R, p1, p2, p3)
@@ -34,25 +42,50 @@ def fit_profile(file, gamma, upsilon, gamma_s, theta, E_lookup, h):
     
     print(f"{Fe}_{G}_{vol} - {R*1000:.1f}")
 
-    fits["actual"] = RidgeFit(x_ax, defl, vol, R, G, Fe, gamma, RidgeFitMethod.NONE, None, [-1, E, -1], None)
+# calculate the angle below the peak theta_s
+    # peak_angle = np.rad2deg(np.arctan2(defl[peak-1]-defl[peak], x_ax[peak-1]-x_ax[peak])- 
+    #                         np.arctan2(defl[peak+1]-defl[peak], x_ax[peak+1]-x_ax[peak]))
+    peak_angle = calc_peak_angle(x_ax, defl, peak)
 
-    curve_fit_lsq_args = {"nan_policy":"omit","max_nfev": 200*len(x_ax)}#, "loss":"soft_l1"}
+    fits["actual"] = RidgeFit(x_ax, defl, vol, R, G, Fe, gamma, RidgeFitMethod.NONE, None, [-1, E, -1], None, peak_angle=peak_angle)
 
-    popt, pcov = curve_fit(fit_wrap(shanahan), x_ax, defl, p0=(theta, E, 1), bounds=([0,-np.inf,0],[180,np.inf,np.inf]), **curve_fit_lsq_args)
-    fits["shanahan"] = RidgeFit(x_ax, defl, vol, R, G, Fe, gamma, RidgeFitMethod.SHANAHAN, shanahan, popt, pcov)
+    curve_fit_lsq_args = {"nan_policy":"omit","max_nfev": 400*(1+len(x_ax)), "loss":"soft_l1", "full_output":True, "gtol":1e-9, "xtol":1e-9, "ftol":1e-9, "method":"trf"}
+
+    popt, pcov, infodict, mesg, ier = curve_fit(fit_wrap(shanahan), x_ax, defl, p0=(theta, E, 1), bounds=([0,-np.inf,0],[180,np.inf,np.inf]), **curve_fit_lsq_args)
+    # y_vals = shanahan(x_ax[peak-1:peak+2], gamma, R, *popt)
+    # peak_angle = np.rad2deg(np.arctan2(y_vals[0]-y_vals[1], x_peak_ps[0]-x_peak_ps[1])- 
+    #                         np.arctan2(y_vals[2]-y_vals[1], x_peak_ps[0]-x_peak_ps[1]))
+    peak_angle = calc_peak_angle(x_ax, shanahan(x_ax, gamma, R, *popt), peak)
+    fits["shanahan"] = RidgeFit(x_ax, defl, vol, R, G, Fe, gamma, RidgeFitMethod.SHANAHAN, shanahan, popt, pcov, peak_angle=peak_angle)
     print(f"Shanahan:\tR2 {fits["shanahan"].r2:.3f}")
+    print(mesg)
 
-    popt, pcov = curve_fit(fit_wrap(limat_symmetric), x_ax, defl, p0=(gamma_s, E, theta), bounds=([0,0,0],[np.inf,np.inf,180]), **curve_fit_lsq_args)
-    fits["limat"] = RidgeFit(x_ax, defl, vol, R, G, Fe, gamma, RidgeFitMethod.LIMAT, limat_symmetric, popt, pcov)
+    popt, pcov, infodict, mesg, ier = curve_fit(fit_wrap(limat_symmetric), x_ax, defl, p0=(gamma_s, E, theta), bounds=([0,0,0],[np.inf,np.inf,180]), **curve_fit_lsq_args)
+    # y_vals = limat_symmetric(x_ax[peak-1:peak+2], gamma, R, *popt)
+    # peak_angle = np.rad2deg(np.arctan2(y_vals[0]-y_vals[1], x_peak_ps[0]-x_peak_ps[1])- 
+    #                         np.arctan2(y_vals[2]-y_vals[1], x_peak_ps[0]-x_peak_ps[1]))
+    peak_angle = calc_peak_angle(x_ax, limat_symmetric(x_ax, gamma, R, *popt), peak)
+    fits["limat"] = RidgeFit(x_ax, defl, vol, R, G, Fe, gamma, RidgeFitMethod.LIMAT, limat_symmetric, popt, pcov, peak_angle=peak_angle)
     print(f"Limat:\t\tR2 {fits["limat"].r2:.3f}")
+    print(mesg)
 
-    popt, pcov = curve_fit(fit_wrap(style_ld_ts), x_ax, defl, p0=(upsilon, E, h), bounds=([0,0,0],[np.inf,np.inf,np.inf]), **curve_fit_lsq_args)
-    fits["style_ld"] = RidgeFit(x_ax, defl, vol, R, G, Fe, gamma, RidgeFitMethod.STYLE_LD, style_ld_ts, popt, pcov)
+    popt, pcov, infodict, mesg, ier = curve_fit(fit_wrap(style_ld_ts), x_ax, defl, p0=(upsilon, E, h), bounds=([0,0,0],[np.inf,np.inf,np.inf]), **curve_fit_lsq_args)
+    # y_vals = style_ld_ts(x_ax[peak-1:peak+2], gamma, R, *popt)
+    # peak_angle = np.rad2deg(np.arctan2(y_vals[0]-y_vals[1], x_peak_ps[0]-x_peak_ps[1])- 
+    #                         np.arctan2(y_vals[2]-y_vals[1], x_peak_ps[0]-x_peak_ps[1]))
+    peak_angle = calc_peak_angle(x_ax, style_ld_ts(x_ax, gamma, R, *popt), peak)
+    fits["style_ld"] = RidgeFit(x_ax, defl, vol, R, G, Fe, gamma, RidgeFitMethod.STYLE_LD, style_ld_ts, popt, pcov, peak_angle=peak_angle)
     print(f"Style R>>h:\tR2 {fits["style_ld"].r2:.3f}")
+    print(mesg)
 
-    popt, pcov = curve_fit(fit_wrap(style_exact), x_ax, defl, p0=(upsilon, E, h), bounds=([0,0,0],[np.inf,np.inf,np.inf]), **curve_fit_lsq_args)
-    fits["style"] = RidgeFit(x_ax, defl, vol, R, G, Fe, gamma, RidgeFitMethod.STYLE_LD, style_exact, popt, pcov)
+    popt, pcov, infodict, mesg, ier = curve_fit(fit_wrap(style_exact), x_ax, defl, p0=(upsilon, E, h), bounds=([0,0,h/2],[np.inf,np.inf,np.inf]), **curve_fit_lsq_args)
+    # y_vals = style_exact(x_ax[peak-1:peak+2], gamma, R, *popt)
+    # peak_angle = np.rad2deg(np.arctan2(y_vals[0]-y_vals[1], x_peak_ps[0]-x_peak_ps[1])- 
+    #                         np.arctan2(y_vals[2]-y_vals[1], x_peak_ps[0]-x_peak_ps[1]))
+    peak_angle = calc_peak_angle(x_ax, style_exact(x_ax, gamma, R, *popt), peak)
+    fits["style"] = RidgeFit(x_ax, defl, vol, R, G, Fe, gamma, RidgeFitMethod.STYLE_LD, style_exact, popt, pcov, peak_angle=peak_angle)
     print(f"Style:\t\tR2 {fits["style"].r2:.3f}")
+    print(mesg)
     print()
 
     return fits

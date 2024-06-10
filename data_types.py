@@ -40,6 +40,7 @@ class RidgeFit:
     _: KW_ONLY
     perr: np.ndarray = None
     r2: float = None
+    peak_angle:float = None
     # filename: str = None
 
     # circ_params: np.ndarray = None

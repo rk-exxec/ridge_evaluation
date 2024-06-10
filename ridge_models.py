@@ -60,7 +60,7 @@ def _integrand_ld_ts(s, x_ ,upsilon, E,h):
         return np.cos(s*x_) / ( (numerator/denominator)*s + (B*s**2)/h)
 
 def style_ld_ts(r, gamma, R, upsilon, E, h):
-    r = np.asarray(r)
+    r = np.abs(np.asarray(r))
     x_ = (r-R)/h 
     G = E/3       
     int_out = integrate(_integrand_ld_ts, 0, 1e9, args=(x_[..., np.newaxis],upsilon,E,h))
