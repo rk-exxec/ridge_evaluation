@@ -40,6 +40,7 @@ def _ransac_circle(points:np.ndarray, n_samples:int=3, n_iterations:int=500, res
     return model, inliers   
 
 def _estimate_center(points:np.ndarray):
+    # use circle fit to estimate cneter and radius of the rim
     circ, _ = _ransac_circle(points)
     yc, xc, r = (int(round(x)) for x in circ.params)
     residuals = np.sum(circ.residuals(points)**2)
@@ -48,7 +49,7 @@ def _estimate_center(points:np.ndarray):
     diffs = points - mean
     tss = np.sum((diffs[:,0]+diffs[:,1])**2)
 
-    # calculate r2 score
+    # calculate r2 score of circle fit
     r2 = 1-residuals/tss
     return yc, xc, r, r2   
 
@@ -98,6 +99,7 @@ def _pixels_along_line(x1, y1, angle, radius) -> np.ndarray:
 
     err = dfd/2
     # Initialize the plotting points
+    # idk how to preallocate np arrays here, so I use lists
     xcoordinates = list()
     ycoordinates = list()
 
@@ -121,10 +123,10 @@ def _pixels_along_line(x1, y1, angle, radius) -> np.ndarray:
     return np.vstack((np.asarray(xcoordinates), np.asarray(ycoordinates)))
     
 @nb.jit(cache=True, parallel=True)
-def radial_coord_plane(x_ax, y_ax):
+def _radial_coord_plane(x_ax, y_ax):
     radial_plane = np.zeros((len(y_ax), len(x_ax)), dtype=np.float32)
     for i in nb.prange(len(x_ax)):
-        for j in nb.prange(len(y_ax)):
+        for j in range(len(y_ax)):
             radial_plane[j,i] = np.sqrt(x_ax[i]**2 + y_ax[j]**2)
 
     return radial_plane
@@ -132,7 +134,7 @@ def radial_coord_plane(x_ax, y_ax):
 # @nb.njit(cache=True, parallel=True)
 def _robust_radial_profile(image:np.ndarray, circ_params:tuple, pixelscale:tuple[float], max_rel_diff_to_circle=0.05) -> tuple[np.ndarray, np.ndarray]:
     yc,xc,r = circ_params
-    angles = np.linspace(0, 2*np.pi, 32)
+   
 
     # work with real dimensions
     # build 3d data array
@@ -141,16 +143,14 @@ def _robust_radial_profile(image:np.ndarray, circ_params:tuple, pixelscale:tuple
     x_values = np.arange(image.shape[1])*pixelscale[0]*1e6 - xcs
     y_values = np.arange(image.shape[0])*pixelscale[1]*1e6 - ycs
 
-    # radial_coord = np.zeros((image.shape[0], image.shape[1]), dtype=np.float32)
-    radial_coord = radial_coord_plane(x_values, y_values)
-
-    # x_grid,y_grid = np.meshgrid(x_values, y_values)
-    # radial_coord = np.sqrt((x_grid)**2 + (y_grid)**2)
-    # angle_coord = np.arctan2(y_grid, x_grid)
-
-    data = np.concatenate((radial_coord[np.newaxis,:,:], image[np.newaxis,:,:]), axis=0)# angle_coord[np.newaxis,:,:] ,
+    # create a radial coordinate plane for easier calculations
+    radial_coord = _radial_coord_plane(x_values, y_values)
+    # stack radial coordinate plane with image
+    data = np.concatenate((radial_coord[np.newaxis,:,:], image[np.newaxis,:,:]), axis=0)
 
     # use angles to calculate affected pixels in image, since this is just as effective as using the angular coordinate, but more performant
+    # 32 equidistant angles, every angle creates a radius-height profile from the stacked image by using bresenhams algorithm for pixel selection
+    angles = np.linspace(0, 2*np.pi, 32)
     min_radius = np.min([xc, yc, image.shape[0]-yc, image.shape[1]-xc])
     profiles = list()
     for angle in angles:
@@ -159,7 +159,8 @@ def _robust_radial_profile(image:np.ndarray, circ_params:tuple, pixelscale:tuple
         z_ax = data[:, poi[1,:], poi[0,:]]
         profiles.append(z_ax)
 
-    #shift profiles so that peaks are aligned
+    # check if peak is at the same radius for all profiles
+    # exclude profiles where the peak is not at the same radius
     # aligning_peak = np.max([p[0,np.argmax(p[1,:])] for p in profiles])
     circle_fit_radius = radial_coord[yc, xc+r] # gets the radius of the circle at the 3 o'clock position, which is at the peak of the profile
     filtered_profiles = [p for p in profiles if np.isclose(circle_fit_radius, p[0,np.argmax(p[1,:])], rtol=max_rel_diff_to_circle)]
@@ -168,7 +169,7 @@ def _robust_radial_profile(image:np.ndarray, circ_params:tuple, pixelscale:tuple
 
     merged_profiles = np.hstack(filtered_profiles)
 
-    # https://stackoverflow.com/a/21242776/9173710 using bincount for radial profile
+    # https://stackoverflow.com/a/21242776/9173710 using bincount to create mean for radial profile
 
     r = np.round(merged_profiles[0,:]).astype(int)
     tbin = np.bincount(r.ravel(), merged_profiles[1,:].ravel())
