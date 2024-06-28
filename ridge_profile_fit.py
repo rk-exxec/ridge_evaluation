@@ -14,7 +14,7 @@ def calc_peak_angle(x, y, peak_idx):
     return np.rad2deg(np.arctan2(line_down,1) - np.arctan2(line_up,1))
 
 
-def fit_profile(file, gamma, upsilon, gamma_s, theta, E_lookup, h, models=["all"]):
+def fit_profile(file, gamma, upsilon, gamma_s, theta, E_lookup, h, models=["all"]) -> dict[str, RidgeFit]:
 
     # profile = pd.read_csv(file, sep=";", skiprows=3, names=["x","y","idk"], index_col=False)
     profile = pd.read_csv(file, sep=";", index_col=False)
@@ -97,7 +97,7 @@ def fit_profile(file, gamma, upsilon, gamma_s, theta, E_lookup, h, models=["all"
 
     return fits
 
-def fit_profile_style(file, gamma, upsilon,  E_lookup, h, fix_upsilon = False, fix_h = False):
+def fit_profile_style(file, gamma, upsilon,  E_lookup, h, fix_upsilon = False, fix_h = False) -> dict[str, RidgeFit]:
 
     # profile = pd.read_csv(file, sep=";", skiprows=3, names=["x","y","idk"], index_col=False)
     profile = pd.read_csv(file, sep=";", index_col=False)
