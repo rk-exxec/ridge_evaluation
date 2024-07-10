@@ -104,7 +104,7 @@ def fit_profile_style(file, gamma, upsilon,  E_lookup, h, fix_upsilon = False, f
 
     Fe, G, vol, th, *_ = Path(file).stem.split("_")
 
-    E = E_lookup[f"{Fe}_{G}"]   
+    E = E_lookup[f"{Fe}_{G}_{th}"]   
     h = h[th]
 
     defl = np.asarray(profile["y"], dtype=np.float64)[50:]
