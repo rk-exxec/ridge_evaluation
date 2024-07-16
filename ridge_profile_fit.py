@@ -8,10 +8,13 @@ from numpy.polynomial.polynomial import Polynomial
 from ridge_models import style_exact, style_ld_ts, shanahan, limat_symmetric
 
 def calc_peak_angle(x, y, peak_idx):
-    line_up =  Polynomial.fit(x[peak_idx-4:peak_idx+1], y[peak_idx-4:peak_idx+1], 1).convert().coef[1]
-    line_down = Polynomial.fit(x[peak_idx:peak_idx+5], y[peak_idx:peak_idx+5], 1).convert().coef[1]
+    try:
+        line_up =  Polynomial.fit(x[peak_idx-4:peak_idx+1], y[peak_idx-4:peak_idx+1], 1).convert().coef[1]
+        line_down = Polynomial.fit(x[peak_idx:peak_idx+5], y[peak_idx:peak_idx+5], 1).convert().coef[1]
 
-    return np.rad2deg(np.arctan2(line_down,1) - np.arctan2(line_up,1))
+        return np.rad2deg(np.arctan2(line_down,1) - np.arctan2(line_up,1))
+    except:
+        return np.nan
 
 
 def fit_profile(file, gamma, upsilon, gamma_s, theta, E_lookup, h, models=["all"]) -> dict[str, RidgeFit]:
@@ -104,7 +107,7 @@ def fit_profile_style(file, gamma, upsilon,  E_lookup, h, fix_upsilon = False, f
 
     Fe, G, vol, th, *_ = Path(file).stem.split("_")
 
-    E = E_lookup[f"{Fe}_{G}_{th}"]   
+    E = E_lookup[f"{Fe}_{G}"]   
     h = h[th]
 
     defl = np.asarray(profile["y"], dtype=np.float64)[50:]
