@@ -100,7 +100,7 @@ def fit_profile(file, gamma, upsilon, gamma_s, theta, E_lookup, h, models=["all"
 
     return fits
 
-def fit_profile_style(file, gamma, upsilon,  E_lookup, h, fix_upsilon = False, fix_h = False) -> dict[str, RidgeFit]:
+def fit_profile_style(file, gamma, upsilon,  E_lookup, h, fix_upsilon = False, fix_h = False, **kwargs) -> dict[str, RidgeFit]:
 
     # profile = pd.read_csv(file, sep=";", skiprows=3, names=["x","y","idk"], index_col=False)
     profile = pd.read_csv(file, sep=";", index_col=False)
