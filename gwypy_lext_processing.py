@@ -60,7 +60,7 @@ try:
 
         try:
             print("Loading file " + str(f))
-            new_filename = Path(f)#target_path / Path(f).stem
+            new_filename = target_path / Path(f).stem
             #print("Target Path: " + new_filename)
 
             container = gwy.gwy_file_load(f, gwy.RUN_IMMEDIATE)
