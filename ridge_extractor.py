@@ -2,6 +2,7 @@ from skimage.measure import  CircleModel, ransac
 from skimage.exposure import equalize_adapthist, equalize_hist
 from sklearn.cluster import KMeans
 from skimage import exposure, filters, segmentation
+from scipy import stats
 import numpy as np
 import numba as nb
 import diplib as dip
@@ -134,14 +135,15 @@ def _radial_coord_plane(x_ax, y_ax):
 # @nb.njit(cache=True, parallel=True)
 def _robust_radial_profile(image:np.ndarray, circ_params:tuple, pixelscale:tuple[float], max_rel_diff_to_circle=0.05) -> tuple[np.ndarray, np.ndarray]:
     yc,xc,r = circ_params
-   
+    
+    # use to get sub-micrometer resolution even when rounding to integers
+    accuracy_factor = 1e6
 
     # work with real dimensions
     # build 3d data array
-    # use 1e6 to get micrometer resolution even when rounding to integers
-    ycs,xcs = yc*pixelscale[1]*1e6, xc*pixelscale[0]*1e6
-    x_values = np.arange(image.shape[1])*pixelscale[0]*1e6 - xcs
-    y_values = np.arange(image.shape[0])*pixelscale[1]*1e6 - ycs
+    ycs,xcs = yc*pixelscale[1]*accuracy_factor, xc*pixelscale[0]*accuracy_factor
+    x_values = np.arange(image.shape[1])*pixelscale[0]*accuracy_factor - xcs
+    y_values = np.arange(image.shape[0])*pixelscale[1]*accuracy_factor - ycs
 
     # create a radial coordinate plane for easier calculations
     radial_coord = _radial_coord_plane(x_values, y_values)
@@ -159,6 +161,8 @@ def _robust_radial_profile(image:np.ndarray, circ_params:tuple, pixelscale:tuple
         z_ax = data[:, poi[1,:], poi[0,:]]
         profiles.append(z_ax)
 
+
+
     # check if peak is at the same radius for all profiles
     # exclude profiles where the peak is not at the same radius
     # aligning_peak = np.max([p[0,np.argmax(p[1,:])] for p in profiles])
@@ -172,9 +176,18 @@ def _robust_radial_profile(image:np.ndarray, circ_params:tuple, pixelscale:tuple
     # https://stackoverflow.com/a/21242776/9173710 using bincount to create mean for radial profile
 
     r = np.round(merged_profiles[0,:]).astype(int)
-    tbin = np.bincount(r.ravel(), merged_profiles[1,:].ravel())
-    nr = np.bincount(r.ravel())
-    radial_profile = tbin / nr
+    # tbin = np.bincount(r.ravel(), merged_profiles[1,:].ravel())
+    # nr = np.bincount(r.ravel())
+    # radial_profile = tbin / nr
+
+    bins = np.arange(r.min(), r.max()+1, dtype=np.float32)
+
+    mean, bin_edges, binnumber = stats.binned_statistic(r.ravel(), merged_profiles[1,:].ravel(), statistic="mean", bins=bins)
+    stdev, _ ,_ = stats.binned_statistic(r.ravel(), merged_profiles[1,:].ravel(), statistic="std", bins=bins)
+    count, _ ,_ = stats.binned_statistic(r.ravel(), merged_profiles[1,:].ravel(), statistic="count", bins=bins)
+    stderr = stdev/np.sqrt(count)
+
+
 
     # using histogram on selected slivces as it supports negative radii
     # r = np.round(merged_profiles[0,:]).astype(int)
@@ -183,8 +196,8 @@ def _robust_radial_profile(image:np.ndarray, circ_params:tuple, pixelscale:tuple
     # radial_profile = tbin / nr
 
     # rescale to meters
-    x_ax = np.arange(len(radial_profile), dtype=np.float32)*1e-6
-    return x_ax, radial_profile
+    bins = bins/accuracy_factor
+    return (bins[:-1], mean), stdev, stderr
 
 def find_features(image, rim_finder_args):
             
@@ -209,15 +222,15 @@ def extract_ridge_from_image(image_file, robust=True, kmeans_n_clusters=50, thre
 
     yc, xc, r, r2, rim = find_features(image, (threshold, use_kmeans, kmeans_n_clusters, butterworth_cutoff, gamma_correction))
 
-    try:
-        if not robust:
-            radial_profile = _radial_profile(image, (yc,xc), pixelscale, max_rel_diff_to_circle)
-        else: 
-            radial_profile = _robust_radial_profile(image, (yc,xc,r), pixelscale, max_rel_diff_to_circle)
+    # try:
+    if not robust:
+        radial_profile = _radial_profile(image, (yc,xc), pixelscale, max_rel_diff_to_circle)
+    else: 
+        radial_profile, stdev, sterr = _robust_radial_profile(image, (yc,xc,r), pixelscale, max_rel_diff_to_circle)
 
-        return radial_profile, image, (yc,xc,r), rim, r2, pixelscale
-    except Exception as e:
-        print(e)
-        return np.array([range(r), [0]*r]), image, (yc,xc,r), rim, r2, pixelscale
+    return radial_profile, image, (yc,xc,r), rim, r2, pixelscale, stdev, sterr
+    # except Exception as e:
+    #     print(e)
+    #     return np.array([range(r), [0]*r]), image, (yc,xc,r), rim, r2, pixelscale, [0]*r, [0]*r
 
 
