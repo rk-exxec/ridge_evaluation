@@ -100,7 +100,7 @@ def fit_profile(file, gamma, upsilon, gamma_s, theta, E_lookup, h, models=["all"
 
     return fits
 
-def fit_profile_style(file, gamma, upsilon,  E_lookup, h, fix_upsilon = False, fix_h = False, **kwargs) -> dict[str, RidgeFit]:
+def fit_profile_style(file, gamma, upsilon,  E_lookup, h, fix_upsilon = False, fix_h = False, fix_E=False, **kwargs) -> dict[str, RidgeFit]:
 
     # profile = pd.read_csv(file, sep=";", skiprows=3, names=["x","y","idk"], index_col=False)
     profile = pd.read_csv(file, sep=";", index_col=False)
@@ -115,9 +115,9 @@ def fit_profile_style(file, gamma, upsilon,  E_lookup, h, fix_upsilon = False, f
     R = x_ax[np.argmax(defl[10:])+10]
 
     peak = np.argmax(defl)
-    x_ax += R - x_ax[peak]
+    # x_ax += R - x_ax[peak]
 
-    x_peak_ps = x_ax[peak-1:peak+2]
+    # x_peak_ps = x_ax[peak-1:peak+2]
 
     def fit_wrap(func):
         def f(x, p1, p2, p3):
@@ -143,6 +143,9 @@ def fit_profile_style(file, gamma, upsilon,  E_lookup, h, fix_upsilon = False, f
     if fix_h:
         curve_fit_lsq_args["bounds"][0][2] = h-np.finfo(float).eps
         curve_fit_lsq_args["bounds"][1][2] = h
+    if fix_E:
+        curve_fit_lsq_args["bounds"][0][1] = E-1
+        curve_fit_lsq_args["bounds"][1][1] = E
     
     popt, pcov, infodict, mesg, ier = curve_fit(fit_wrap(style_exact), x_ax, defl, **curve_fit_lsq_args)
     peak_angle = calc_peak_angle(x_ax, style_exact(x_ax, gamma, R, *popt), peak)
