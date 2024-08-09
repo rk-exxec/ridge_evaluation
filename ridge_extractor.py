@@ -3,12 +3,14 @@ from skimage.exposure import equalize_adapthist, equalize_hist
 from sklearn.cluster import KMeans
 from skimage import exposure, filters, segmentation
 from scipy import stats
+from skspatial.objects import Line, LineSegment, Point
 import numpy as np
 import numba as nb
 import diplib as dip
 import tifffile
 from fractions import Fraction
 from pathlib import Path
+from itertools import combinations
 
 def _rim_from_image(image:np.ndarray, threshold, use_kmeans, kmeans_n_clusters, butterworth_cutoff, gamma_correction):
     # image = equalize_adapthist(image)
@@ -132,8 +134,45 @@ def _radial_coord_plane(x_ax, y_ax):
 
     return radial_plane
 
+def intersect_image_borders(image_shape, angles, circle_origin, min_radius) -> dict[float, list[Point]]:
+    angle_intersections = dict()
+    max_y = image_shape[0]
+    max_x = image_shape[1]
+    circle_origin = Point(circle_origin)
+    rect_lines = [Line.from_points([0,0], [0, max_y]), Line.from_points([0,0], [max_x, 0]), 
+                  Line.from_points([0, max_y], [max_x, max_y]), Line.from_points([max_x, 0], [max_x, max_y])]
+    
+    intersections: list[Point] = list()
+    # for all angles, check if the line intersects with the image borders
+    # if it does, check if the intesected length includes the expected radius
+    # if it does save the angle and the intersection points
+    for angle in angles:
+        line = Line(circle_origin, direction=[np.cos(angle), np.sin(angle)])
+        for rect_line in rect_lines:
+            try:
+                intersection:Point = line.intersect_line(rect_line)
+                # intersection within image borders?
+                if 0 <= intersection[0] < max_x and 0 <= intersection[1] < max_y:
+                    intersections.append(intersection)
+            except ValueError:
+                continue
+
+
+        distances = np.asarray([circle_origin.distance_point(point) for point in intersections])
+        if np.any(distances > min_radius):
+            min_dist_idx = np.argmin(distances)
+            max_dist_idx = np.argmax(distances)
+            angle_intersections[angle] = {"first_intersection":np.round(intersections[min_dist_idx]).astype(int), "second_intersection": np.round(intersections[max_dist_idx]).astype(int),
+                                          "intersection_distance": intersections[min_dist_idx].distance_point(intersections[max_dist_idx]),
+                                          "min_radius":distances[min_dist_idx], "max_radius":distances[max_dist_idx]}
+
+    return angle_intersections
+
+
+    
+
 # @nb.njit(cache=True, parallel=True)
-def _robust_radial_profile(image:np.ndarray, circ_params:tuple, pixelscale:tuple[float], max_rel_diff_to_circle=0.05) -> tuple[np.ndarray, np.ndarray]:
+def _robust_radial_profile(image:np.ndarray, circ_params:tuple, pixelscale:tuple[float], prune_profiles=True, max_rel_diff_to_circle=0.05) -> tuple[np.ndarray, np.ndarray]:
     yc,xc,r = circ_params
     
     # use to get sub-micrometer resolution even when rounding to integers
@@ -152,22 +191,59 @@ def _robust_radial_profile(image:np.ndarray, circ_params:tuple, pixelscale:tuple
 
     # use angles to calculate affected pixels in image, since this is just as effective as using the angular coordinate, but more performant
     # 32 equidistant angles, every angle creates a radius-height profile from the stacked image by using bresenhams algorithm for pixel selection
-    angles = np.linspace(0, 2*np.pi, 32)
-    min_radius = np.min([xc, yc, image.shape[0]-yc, image.shape[1]-xc])
+    
     profiles = list()
-    for angle in angles:
-        poi = _pixels_along_line(xc, yc, angle, min_radius)
-        poi = poi[:, (poi[0]>=0) & (poi[0]<image.shape[1]) & (poi[1]>=0) & (poi[1]<image.shape[0])]
-        z_ax = data[:, poi[1,:], poi[0,:]]
-        profiles.append(z_ax)
+    max_y = image.shape[0]
+    max_x = image.shape[1]
+    if xc < 0 or yc < 0 or xc > max_x or yc > max_y:
+        # get new starting positions for the angle profiles to support circular profiles larger than image
+        # also remove angles which dont intersect with image
+        angle1 = np.arctan2(0-yc, 0-xc)
+        angle2 = np.arctan2(0-yc, max_x-xc)
+        angle3 = np.arctan2(max_y-yc, 0-xc)
+        angle4 = np.arctan2(max_y-yc, max_x-xc)
+        angles = np.asarray([angle1, angle2, angle3, angle4])
+        # min max comparison doesnt work if 0° is between any of the angles -> rotate 180° if thats the case
+        if 0< yc < max_y:
+            angles += np.pi
+            min_angle = np.min(angles)
+            max_angle = np.max(angles)
+            angles = np.linspace(min_angle, max_angle, 16)-np.pi
+        else:
+            min_angle = np.min(angles)
+            max_angle = np.max(angles)
+            angles = np.linspace(min_angle, max_angle, 16)
 
 
+        intersection_angles = intersect_image_borders(image.shape, angles, (xc, yc), r+50)
+        for angle in intersection_angles.keys():
+            start = intersection_angles[angle]["first_intersection"]
+            poi = _pixels_along_line(*start, angle, intersection_angles[angle]["intersection_distance"])
+            poi = poi[:, (poi[0]>=0) & (poi[0]<image.shape[1]) & (poi[1]>=0) & (poi[1]<image.shape[0])]
+            z_ax = data[:, poi[1,:], poi[0,:]]
+            profiles.append(z_ax)
+        circle_fit_radius = r*np.sqrt(pixelscale[0]**2 + pixelscale[1]**2)*accuracy_factor
+
+    else:
+        angles = np.linspace(0, 2*np.pi, 32)
+        min_radius = np.min([xc, yc, image.shape[0]-yc, image.shape[1]-xc])
+        for angle in angles:
+            poi = _pixels_along_line(xc,yc, angle, min_radius)
+            poi = poi[:, (poi[0]>=0) & (poi[0]<image.shape[1]) & (poi[1]>=0) & (poi[1]<image.shape[0])]
+            z_ax = data[:, poi[1,:], poi[0,:]]
+            profiles.append(z_ax)
+        # gets the radius of the circle at the 3 o'clock position, which is at the peak of the profile
+        circle_fit_radius = radial_coord[yc, xc+r]
 
     # check if peak is at the same radius for all profiles
     # exclude profiles where the peak is not at the same radius
     # aligning_peak = np.max([p[0,np.argmax(p[1,:])] for p in profiles])
-    circle_fit_radius = radial_coord[yc, xc+r] # gets the radius of the circle at the 3 o'clock position, which is at the peak of the profile
-    filtered_profiles = [p for p in profiles if np.isclose(circle_fit_radius, p[0,np.argmax(p[1,:])], rtol=max_rel_diff_to_circle)]
+    
+    if prune_profiles:
+        filtered_profiles = [p for p in profiles if np.isclose(circle_fit_radius, p[0,np.argmax(p[1,:])], rtol=max_rel_diff_to_circle)]
+    else:
+        filtered_profiles = profiles
+    # filtered_profiles = [p for p in profiles if np.isclose(circle_fit_radius, p[0,np.argmax(p[1,:])], rtol=max_rel_diff_to_circle)]
     # for p in profiles:
     #     p[0,:] = p[0,:] + (aligning_peak - p[0,np.argmax(p[1,:])])
 
@@ -197,7 +273,7 @@ def _robust_radial_profile(image:np.ndarray, circ_params:tuple, pixelscale:tuple
 
     # rescale to meters
     bins = bins/accuracy_factor
-    return (bins[:-1], mean), stdev, stderr
+    return circle_fit_radius, (bins[:-1], mean), stdev, stderr
 
 def find_features(image, rim_finder_args):
             
@@ -206,8 +282,7 @@ def find_features(image, rim_finder_args):
 
     return yc, xc, r, r2, rim
 
-        
-def extract_ridge_from_image(image_file, robust=True, kmeans_n_clusters=50, threshold=0.5, use_kmeans=True, butterworth_cutoff=0.001, gamma_correction=3, max_rel_diff_to_circle=0.05):
+def open_tiff_image(image_file):
     if isinstance(image_file, str):
         image_file = Path(image_file)
     with tifffile.TiffFile(image_file) as tif:
@@ -219,18 +294,37 @@ def extract_ridge_from_image(image_file, robust=True, kmeans_n_clusters=50, thre
         xres = Fraction(*metadata["XResolution"].value)*1e6
         yres = Fraction(*metadata["YResolution"].value)*1e6
         pixelscale = (float(1/xres), float(1/yres))
+        return image, pixelscale
 
+        
+def extract_ridge_from_image(image_file, robust=True, kmeans_n_clusters=50, threshold=0.5, use_kmeans=True, butterworth_cutoff=0.001, gamma_correction=3, max_rel_diff_to_circle=0.05):
+    image, pixelscale = open_tiff_image(image_file)
     yc, xc, r, r2, rim = find_features(image, (threshold, use_kmeans, kmeans_n_clusters, butterworth_cutoff, gamma_correction))
 
     # try:
     if not robust:
         radial_profile = _radial_profile(image, (yc,xc), pixelscale, max_rel_diff_to_circle)
+        circle_fit_radius = r*np.sqrt(pixelscale[0]**2 + pixelscale[1]**2)
     else: 
-        radial_profile, stdev, sterr = _robust_radial_profile(image, (yc,xc,r), pixelscale, max_rel_diff_to_circle)
+        circle_fit_radius,radial_profile, stdev, sterr = _robust_radial_profile(image, (yc,xc,r), pixelscale, max_rel_diff_to_circle)
 
-    return radial_profile, image, (yc,xc,r), rim, r2, pixelscale, stdev, sterr
+    return circle_fit_radius,radial_profile, image, (yc,xc,r), rim, r2, pixelscale, stdev, sterr
     # except Exception as e:
     #     print(e)
     #     return np.array([range(r), [0]*r]), image, (yc,xc,r), rim, r2, pixelscale, [0]*r, [0]*r
+
+def extract_partial_ridge(image_file, ridge_only_files=[], robust=True, kmeans_n_clusters=50, threshold=0.5, use_kmeans=True, butterworth_cutoff=0.001, gamma_correction=3, max_rel_diff_to_circle=0.05):
+    image, pixelscale = open_tiff_image(image_file)
+
+    yc, xc, r, r2, rim = find_features(image, (threshold, use_kmeans, kmeans_n_clusters, butterworth_cutoff, gamma_correction))
+    circle_fit_radius,radial_profile, stdev, sterr = _robust_radial_profile(image, (yc,xc,r), pixelscale, prune_profiles=False, max_rel_diff_to_circle=max_rel_diff_to_circle)
+
+    add_profiles = []
+    for file in ridge_only_files:
+        rimage, rpixelscale = open_tiff_image(file)
+        add_profiles.append(_robust_radial_profile(rimage, (yc,xc,r), rpixelscale, prune_profiles=False, max_rel_diff_to_circle=max_rel_diff_to_circle) + (file.stem.split("_")[-2],))
+
+    return circle_fit_radius,radial_profile, image, (yc,xc,r), rim, r2, pixelscale, stdev, sterr , add_profiles
+
 
 
