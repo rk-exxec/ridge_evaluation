@@ -1,16 +1,16 @@
 from skimage.measure import  CircleModel, ransac
-from skimage.exposure import equalize_adapthist, equalize_hist
+from skimage.exposure import equalize_adapthist
 from sklearn.cluster import KMeans
 from skimage import exposure, filters, segmentation
 from scipy import stats
-from skspatial.objects import Line, LineSegment, Point
+from skspatial.objects import Line, Point
 import numpy as np
 import numba as nb
 import diplib as dip
 import tifffile
 from fractions import Fraction
 from pathlib import Path
-from itertools import combinations
+
 
 def _rim_from_image(image:np.ndarray, threshold, use_kmeans, kmeans_n_clusters, butterworth_cutoff, gamma_correction):
     # image = equalize_adapthist(image)
@@ -273,7 +273,7 @@ def _robust_radial_profile(image:np.ndarray, circ_params:tuple, pixelscale:tuple
 
     # rescale to meters
     bins = bins/accuracy_factor
-    return circle_fit_radius, (bins[:-1], mean), stdev, stderr
+    return circle_fit_radius/accuracy_factor, (bins[:-1], mean), stdev, stderr
 
 def find_features(image, rim_finder_args):
             
@@ -297,7 +297,7 @@ def open_tiff_image(image_file):
         return image, pixelscale
 
         
-def extract_ridge_from_image(image_file, robust=True, kmeans_n_clusters=50, threshold=0.5, use_kmeans=True, butterworth_cutoff=0.001, gamma_correction=3, max_rel_diff_to_circle=0.05):
+def extract_ridge_from_image(image_file, robust=True, kmeans_n_clusters=50, threshold=0.5, use_kmeans=True, butterworth_cutoff=0.001, gamma_correction=3, max_rel_diff_to_circle=0.05, prune_profiles=True):
     image, pixelscale = open_tiff_image(image_file)
     yc, xc, r, r2, rim = find_features(image, (threshold, use_kmeans, kmeans_n_clusters, butterworth_cutoff, gamma_correction))
 
@@ -306,7 +306,7 @@ def extract_ridge_from_image(image_file, robust=True, kmeans_n_clusters=50, thre
         radial_profile = _radial_profile(image, (yc,xc), pixelscale, max_rel_diff_to_circle)
         circle_fit_radius = r*np.sqrt(pixelscale[0]**2 + pixelscale[1]**2)
     else: 
-        circle_fit_radius,radial_profile, stdev, sterr = _robust_radial_profile(image, (yc,xc,r), pixelscale, max_rel_diff_to_circle)
+        circle_fit_radius,radial_profile, stdev, sterr = _robust_radial_profile(image, (yc,xc,r), pixelscale, max_rel_diff_to_circle=max_rel_diff_to_circle, prune_profiles=prune_profiles)
 
     return circle_fit_radius,radial_profile, image, (yc,xc,r), rim, r2, pixelscale, stdev, sterr
     # except Exception as e:
@@ -322,7 +322,7 @@ def extract_partial_ridge(image_file, ridge_only_files=[], robust=True, kmeans_n
     add_profiles = []
     for file in ridge_only_files:
         rimage, rpixelscale = open_tiff_image(file)
-        add_profiles.append(_robust_radial_profile(rimage, (yc,xc,r), rpixelscale, prune_profiles=False, max_rel_diff_to_circle=max_rel_diff_to_circle) + (file.stem.split("_")[-2],))
+        add_profiles.append(_robust_radial_profile(rimage, (yc,xc,r), rpixelscale, prune_profiles=False, max_rel_diff_to_circle=max_rel_diff_to_circle) + (float(file.stem.split("_")[-2]),))
 
     return circle_fit_radius,radial_profile, image, (yc,xc,r), rim, r2, pixelscale, stdev, sterr , add_profiles
 

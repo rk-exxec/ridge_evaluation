@@ -1,5 +1,14 @@
-import cupy as np 
-from cupyx.scipy.special import j0, j1
+
+try:
+    # try to use GPU with CUDA if installed
+    # import cupy with same name as numpy to make code compatible with both cupy and numpy
+    import cupy as np 
+    from cupyx.scipy.special import j0, j1
+except ImportError:
+    import numpy as np
+    # monkey-patch np.asnumpy to do nothing to make code compatible with cupy
+    np.asnumpy = lambda x: x
+    from scipy.special import j0, j1
 
 # copy-pasted from
 # https://github.com/scipy/scipy/blob/v1.12.0/scipy/integrate/_tanhsinh.py

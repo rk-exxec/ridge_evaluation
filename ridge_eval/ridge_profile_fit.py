@@ -2,10 +2,10 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 from scipy.optimize import curve_fit
-from data_types import RidgeFit, RidgeFitMethod
 from numpy.polynomial.polynomial import Polynomial
 
-from ridge_models import style_exact, style_ld_ts, shanahan, limat_symmetric
+from .data_types import RidgeFit, RidgeFitMethod
+from .ridge_models import style_exact, style_ld_ts, shanahan, limat_symmetric
 
 def calc_peak_angle(x, y, peak_idx):
     try:
