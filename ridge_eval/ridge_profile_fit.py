@@ -134,7 +134,7 @@ def fit_profile_style(file, gamma, upsilon,  E_lookup, h, fix_upsilon = False, f
 
     fits["actual"] = RidgeFit(x_ax, defl, vol, R, G, Fe, gamma, RidgeFitMethod.NONE, None, [-1, E, -1], None, peak_angle=peak_angle)
 
-    curve_fit_lsq_args = {"nan_policy":"omit","max_nfev": 400*(1+len(x_ax)), "loss":"soft_l1", "full_output":True, "gtol":1e-9, "xtol":1e-9, "ftol":1e-9, "method":"trf",
+    curve_fit_lsq_args = {"nan_policy":"omit","max_nfev": 400*(1+len(x_ax)), "loss":"soft_l1", "full_output":True, "gtol":1e-10, "xtol":1e-10, "ftol":1e-10, "method":"trf",
                           "bounds":([0,0,0],[np.inf,np.inf,np.inf]), "p0":(upsilon, E, h)}
 
     if fix_upsilon:
@@ -146,6 +146,62 @@ def fit_profile_style(file, gamma, upsilon,  E_lookup, h, fix_upsilon = False, f
     if fix_E:
         curve_fit_lsq_args["bounds"][0][1] = E-1
         curve_fit_lsq_args["bounds"][1][1] = E
+
+    peak = defl.argmax()
+    
+    popt, pcov, infodict, mesg, ier = curve_fit(fit_wrap(style_exact), x_ax, defl, **curve_fit_lsq_args)
+    peak_angle = calc_peak_angle(x_ax, style_exact(x_ax, gamma, R, *popt), peak)
+    fits["style"] = RidgeFit(x_ax, defl, vol, R, G, Fe, gamma, RidgeFitMethod.STYLE_LD, style_exact, popt, pcov, peak_angle=peak_angle)
+    print(f"Style:\t\tR2 {fits["style"].r2:.3f}")
+    print(mesg)
+    print()
+
+    return fits
+
+def fit_profile_style_dir(x_ax, defl, stdev, gamma, upsilon, E, h, info, fix_upsilon = False, fix_h = False, fix_E=False, **kwargs) -> dict[str, RidgeFit]:
+
+    # profile = pd.read_csv(file, sep=";", skiprows=3, names=["x","y","idk"], index_col=False)
+
+
+    # defl = np.asarray(profile["y"], dtype=np.float64)[50:]
+    # x_ax = np.asarray(profile["x"], dtype=np.float64)[50:]
+    R = x_ax[np.argmax(defl[10:])+10]
+
+    peak = np.argmax(defl)
+    # x_ax += R - x_ax[peak]
+
+    # x_peak_ps = x_ax[peak-1:peak+2]
+
+    def fit_wrap(func):
+        def f(x, p1, p2, p3):
+            return func(x, gamma, R, p1, p2, p3)
+        return f
+    
+    fits = dict()
+    
+    Fe, G, vol, th = info
+
+
+    # calculate the angle below the peak theta_s
+
+    peak_angle = calc_peak_angle(x_ax, defl, peak)
+
+    fits["actual"] = RidgeFit(x_ax, defl, vol, R, G, Fe, gamma, RidgeFitMethod.NONE, None, [-1, E, -1], None, peak_angle=peak_angle)
+
+    curve_fit_lsq_args = {"nan_policy":"omit","max_nfev": 400*(1+len(x_ax)), "loss":"soft_l1", "full_output":True, "gtol":1e-10, "xtol":1e-10, "ftol":1e-10, "method":"trf",
+                          "bounds":([0,0,0],[np.inf,np.inf,np.inf]), "p0":(upsilon, E, h), "sigma":stdev}
+
+    if fix_upsilon:
+        curve_fit_lsq_args["bounds"][0][0] = upsilon-np.finfo(float).eps
+        curve_fit_lsq_args["bounds"][1][0] = upsilon
+    if fix_h:
+        curve_fit_lsq_args["bounds"][0][2] = h-np.finfo(float).eps
+        curve_fit_lsq_args["bounds"][1][2] = h
+    if fix_E:
+        curve_fit_lsq_args["bounds"][0][1] = E-1
+        curve_fit_lsq_args["bounds"][1][1] = E
+
+    peak = defl.argmax()
     
     popt, pcov, infodict, mesg, ier = curve_fit(fit_wrap(style_exact), x_ax, defl, **curve_fit_lsq_args)
     peak_angle = calc_peak_angle(x_ax, style_exact(x_ax, gamma, R, *popt), peak)

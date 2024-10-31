@@ -14,13 +14,17 @@ try:
     from pathlib2 import Path
     import tifffile
     import traceback
+    import cPickle as pickle
+    import gzip
 
     parser = argparse.ArgumentParser(description="Surface processing with pygwy.")
     parser.add_argument('files', nargs='+', type=str)
     parser.add_argument('-o', '--target', type=str)
     parser.add_argument('-t','--type', type=str, default='tiff')
     parser.add_argument('-i', '--invalid', type=float, default=None)
-    parser.add_argument('-m', '--mask', type=str, default=None)
+    parser.add_argument('-m', '--mask', type=str, default=None, choices=[None, "outliers", "intensity"])
+    parser.add_argument('-p', '--pickle', action='store_true', default=False)
+    parser.add_argument('-e', '--export_intensity', action='store_true', default=False) # export intensity data as well
 
     args = vars(parser.parse_args())
 
@@ -34,10 +38,13 @@ try:
         remove_invalids = True
         invalid = args['invalid']
     else:
-        remove_invalids = False
+        remove_invalids = False#
+
+    store_as_pickle = args['pickle']
+    export_intensity = args['export_intensity']
 
     mask_type = args['mask']
-    if mask_type and not mask_type in ['outliers']:
+    if mask_type and not mask_type in ['outliers','intensity']:
         print("Error: Mask type unknown! Not producing mask.")
         mask_type = None
     settings = gwy.gwy_app_settings_get()
@@ -66,19 +73,21 @@ try:
             container = gwy.gwy_file_load(f, gwy.RUN_IMMEDIATE)
             gwy.gwy_app_data_browser_add(container)
             data_field_idx = gwy.gwy_app_data_browser_find_data_by_title(container, "Height")[0]
+            intensity_idx = gwy.gwy_app_data_browser_find_data_by_title(container, "Intensity")[0]
             print(data_field_idx)
             gwy.gwy_app_data_browser_select_data_field(container, data_field_idx)
             
             
             print("Applying transformations")
             #leveling plane
-            gwy.gwy_process_func_run("plane_level", container, gwy.RUN_IMMEDIATE)
-            gwy.gwy_process_func_run('polylevel', container, gwy.RUN_IMMEDIATE)
+            # gwy.gwy_process_func_run("plane_level", container, gwy.RUN_IMMEDIATE)
+            # gwy.gwy_process_func_run('polylevel', container, gwy.RUN_IMMEDIATE)
 
-            # gwy.gwy_process_func_run('flatten_base', container, gwy.RUN_IMMEDIATE)
+            gwy.gwy_process_func_run('flatten_base', container, gwy.RUN_IMMEDIATE)
         
             
             data_field = container['/{0}/data'.format(data_field_idx)]
+            intensity_field = container['/{0}/data'.format(intensity_idx)]
 
 
             size = (data_field.get_xreal(), data_field.get_yreal())
@@ -91,7 +100,7 @@ try:
             
             print("Smoothing")
             # filter to remove noise
-            data_field.filter_gaussian(1.0)
+            # data_field.filter_gaussian(1.0)
 
             print("Exporting results ...")
             
@@ -103,13 +112,25 @@ try:
             meta_dict = {k:gwy_meta.get_value_by_name(k) for k in gwy_meta.keys_by_name()}
 
             np_data = gwyutils.data_field_data_as_array(data_field)
+            np_intensity = gwyutils.data_field_data_as_array(intensity_field)
+
             metadata=dict(microscope="Olympus LEXT 4000", PhysicalSizeX=dxu, PhysicalSizeY=dyu, PhysicalSizeUnit="um", PhysicalSizeZ=0.8, **meta_dict)
             # print(new_filename,new_filename.with_suffix(".ome.tif"))
             print(1/dx, 1/dy)
-            tifffile.imwrite(str(new_filename.with_suffix(".ome.tif")), np_data, 
-                    compress=('zstd',9), tile=(256,256),
-                    metadata=metadata, ijmetadata=metadata,
-                    resolution=(1/dxu, 1/dyu))
+
+
+            if store_as_pickle:
+                with gzip.GzipFile(str(new_filename.with_suffix(".pkl.gz")), 'wb') as f:
+                    if export_intensity:
+                        data = (metadata, (dxu, dyu), np_data, np_intensity)
+                    else:
+                        data = (metadata, (dxu, dyu), np_data)
+                    pickle.dump(data, f, -1)
+            else:
+                tifffile.imwrite(str(new_filename.with_suffix(".ome.tif")), np_data, 
+                        compress=('zstd',9), tile=(256,256),
+                        metadata=metadata, ijmetadata=metadata,
+                        resolution=(1/dxu, 1/dyu))
             
             gwy.gwy_app_data_browser_remove(container)
             print("Done")
