@@ -372,6 +372,18 @@ def extract_ridge_round(image_file, robust=True, kmeans_n_clusters=50, threshold
         circle_fit_radius,radial_profile, stdev, sterr, ridge_rad = _round_radial_profile(image, (yc,xc,r), pixelscale, max_rel_diff_to_circle=max_rel_diff_to_circle, prune_profiles=prune_profiles)
 
     return circle_fit_radius,radial_profile, image, (yc,xc,r), rim, r2, pixelscale, stdev, sterr, ridge_rad
+
+def extract_ridge_round_img(image, pixelscale, robust=True, kmeans_n_clusters=50, threshold=0.5, use_kmeans=True, butterworth_cutoff=0.001, gamma_correction=3, max_rel_diff_to_circle=0.05, prune_profiles=True):
+    yc, xc, r, r2, rim = find_features(image, (threshold, use_kmeans, kmeans_n_clusters, butterworth_cutoff, gamma_correction))
+
+    # try:
+    if not robust:
+        radial_profile = _radial_profile(image, (yc,xc), pixelscale, max_rel_diff_to_circle)
+        circle_fit_radius = r*np.sqrt(pixelscale[0]**2 + pixelscale[1]**2)
+    else: 
+        circle_fit_radius,radial_profile, stdev, sterr, ridge_rad = _round_radial_profile(image, (yc,xc,r), pixelscale, max_rel_diff_to_circle=max_rel_diff_to_circle, prune_profiles=prune_profiles)
+
+    return circle_fit_radius,radial_profile, (yc,xc,r), rim, r2, stdev, sterr, ridge_rad
     # except Exception as e:
     #     print(e)
     #     return np.array([range(r), [0]*r]), image, (yc,xc,r), rim, r2, pixelscale, [0]*r, [0]*r
