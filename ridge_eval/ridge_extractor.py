@@ -193,6 +193,9 @@ def _round_radial_profile(image:np.ndarray, circ_params:tuple, pixelscale:tuple[
     min_radius = np.min([xc, yc, image.shape[0]-yc, image.shape[1]-xc])
     max_radius = np.max([xc, yc, image.shape[0]-yc, image.shape[1]-xc])
     circles_idx = [circle_perimeter(yc, xc, i, method="andres", shape=image.shape) for i in range(1,max_radius)]
+    # circles_idx = [c for c in circles_idx if np.all(c[0]>=0) and np.all(c[0]<image.shape[0]) and np.all(c[1]>=0) and np.all(c[1]<image.shape[1])]
+    #filter empty arrays from list
+    circles_idx = [c for c in circles_idx if c[0].size > 0]
     radii = list()
     for idx in circles_idx:
         z_ax = image[idx]
@@ -206,7 +209,7 @@ def _round_radial_profile(image:np.ndarray, circ_params:tuple, pixelscale:tuple[
     for i,radius in enumerate(radii):
         rad[i] = (1+i)*pixelscale[0]
         z_score = np.abs(stats.zscore(radius))
-        radius = radius[z_score<3] # 3 equals 3 sigma
+        # radius = radius[z_score<3] # 3 equals 3 sigma, removes outliers
         mean[i] = np.mean(radius)
         stdev[i] = np.std(radius)
         count = len(radius)
@@ -270,7 +273,7 @@ def _robust_radial_profile(image:np.ndarray, circ_params:tuple, pixelscale:tuple
         circle_fit_radius = r*np.sqrt(pixelscale[0]**2 + pixelscale[1]**2)*accuracy_factor
 
     else:
-        angles = np.linspace(0, 2*np.pi, 32)
+        angles = np.linspace(0, 2*np.pi, 64)
         min_radius = np.min([xc, yc, image.shape[0]-yc, image.shape[1]-xc])
         for angle in angles:
             poi = _pixels_along_line(xc,yc, angle, min_radius)
@@ -388,11 +391,23 @@ def extract_ridge_round_img(image, pixelscale, robust=True, kmeans_n_clusters=50
     #     print(e)
     #     return np.array([range(r), [0]*r]), image, (yc,xc,r), rim, r2, pixelscale, [0]*r, [0]*r
 
+def extract_ridge_slices(image, pixelscale, robust=True, kmeans_n_clusters=50, threshold=0.5, use_kmeans=True, butterworth_cutoff=0.001, gamma_correction=3, max_rel_diff_to_circle=0.05, prune_profiles=True):
+    yc, xc, r, r2, rim = find_features(image, (threshold, use_kmeans, kmeans_n_clusters, butterworth_cutoff, gamma_correction))
+
+    # try:
+    if not robust:
+        radial_profile = _radial_profile(image, (yc,xc), pixelscale, max_rel_diff_to_circle)
+        circle_fit_radius = r*np.sqrt(pixelscale[0]**2 + pixelscale[1]**2)
+    else: 
+        circle_fit_radius,radial_profile, stdev, sterr = _robust_radial_profile(image, (yc,xc,r), pixelscale, max_rel_diff_to_circle=max_rel_diff_to_circle, prune_profiles=prune_profiles)
+
+    return circle_fit_radius,radial_profile, (yc,xc,r), rim, r2, stdev, sterr, circle_fit_radius
+
 def extract_partial_ridge(image_file, ridge_only_files=[], robust=True, kmeans_n_clusters=50, threshold=0.5, use_kmeans=True, butterworth_cutoff=0.001, gamma_correction=3, max_rel_diff_to_circle=0.05):
     image, pixelscale = open_surface_img(image_file)
 
     yc, xc, r, r2, rim = find_features(image, (threshold, use_kmeans, kmeans_n_clusters, butterworth_cutoff, gamma_correction))
-    circle_fit_radius,radial_profile, stdev, sterr = _round_radial_profile(image, (yc,xc,r), pixelscale, prune_profiles=False, max_rel_diff_to_circle=max_rel_diff_to_circle)
+    circle_fit_radius,radial_profile, stdev, sterr, _ = _round_radial_profile(image, (yc,xc,r), pixelscale, prune_profiles=False, max_rel_diff_to_circle=max_rel_diff_to_circle)
 
     add_profiles = []
     for file in ridge_only_files:
@@ -401,3 +416,22 @@ def extract_partial_ridge(image_file, ridge_only_files=[], robust=True, kmeans_n
 
     return circle_fit_radius,radial_profile, image, (yc,xc,r), rim, r2, pixelscale, stdev, sterr , add_profiles
 
+def extract_ridge_slices_zeroing(image, pixelscale, robust=True, kmeans_n_clusters=50, threshold=0.5, use_kmeans=True, butterworth_cutoff=0.001, gamma_correction=3, max_rel_diff_to_circle=0.05, prune_profiles=True):
+    yc, xc, r, r2, rim = find_features(image, (threshold, use_kmeans, kmeans_n_clusters, butterworth_cutoff, gamma_correction))
+
+    #determine indices of pixels that are inside the circle, padding of half distance to image edge
+    y,x = np.indices(image.shape)
+    mask = ((x-xc)**2 + (y-yc)**2) < (r + abs(image.shape[0]-yc)/2)**2
+
+    # calculate mean of values outside of circle
+    mean_outside = np.mean(image[~mask])
+    # subtract mean
+    image = image - mean_outside
+    # try:
+    if not robust:
+        radial_profile = _radial_profile(image, (yc,xc), pixelscale, max_rel_diff_to_circle)
+        circle_fit_radius = r*np.sqrt(pixelscale[0]**2 + pixelscale[1]**2)
+    else: 
+        circle_fit_radius,radial_profile, stdev, sterr = _robust_radial_profile(image, (yc,xc,r), pixelscale, max_rel_diff_to_circle=max_rel_diff_to_circle, prune_profiles=prune_profiles)
+
+    return circle_fit_radius,radial_profile, (yc,xc,r), rim, r2, stdev, sterr, circle_fit_radius

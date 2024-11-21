@@ -83,7 +83,9 @@ try:
             # gwy.gwy_process_func_run("plane_level", container, gwy.RUN_IMMEDIATE)
             # gwy.gwy_process_func_run('polylevel', container, gwy.RUN_IMMEDIATE)
 
-            gwy.gwy_process_func_run('flatten_base', container, gwy.RUN_IMMEDIATE)
+            gwy.gwy_process_func_run('level', container, gwy.RUN_IMMEDIATE)
+            gwy.gwy_process_func_run('zero_mean', container, gwy.RUN_IMMEDIATE)
+        
         
             
             data_field = container['/{0}/data'.format(data_field_idx)]
