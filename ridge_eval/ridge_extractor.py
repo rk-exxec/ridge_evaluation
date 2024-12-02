@@ -143,8 +143,9 @@ def _pixels_along_line(x1, y1, angle, radius) -> np.ndarray:
 def _radial_coord_plane(x_ax, y_ax):
     radial_plane = np.zeros((len(y_ax), len(x_ax)), dtype=np.float32)
     for i in nb.prange(len(x_ax)):
-        for j in range(len(y_ax)):
-            radial_plane[j,i] = np.sqrt(x_ax[i]**2 + y_ax[j]**2)
+        radial_plane[:,i] = np.sqrt(x_ax[i]**2 + y_ax[:]**2)
+        # for j in range(len(y_ax)):
+            # radial_plane[j,i] = np.sqrt(x_ax[i]**2 + y_ax[j]**2)
 
     return radial_plane
 
@@ -295,6 +296,8 @@ def _robust_radial_profile(image:np.ndarray, circ_params:tuple, pixelscale:tuple
     # for p in profiles:
     #     p[0,:] = p[0,:] + (aligning_peak - p[0,np.argmax(p[1,:])])
 
+    print(f"Filtered {len(profiles)-len(filtered_profiles)} profiles")
+
     merged_profiles = np.hstack(filtered_profiles)
 
     # https://stackoverflow.com/a/21242776/9173710 using bincount to create mean for radial profile
@@ -418,15 +421,27 @@ def extract_partial_ridge(image_file, ridge_only_files=[], robust=True, kmeans_n
 
 def extract_ridge_slices_zeroing(image, pixelscale, robust=True, kmeans_n_clusters=50, threshold=0.5, use_kmeans=True, butterworth_cutoff=0.001, gamma_correction=3, max_rel_diff_to_circle=0.05, prune_profiles=True):
     yc, xc, r, r2, rim = find_features(image, (threshold, use_kmeans, kmeans_n_clusters, butterworth_cutoff, gamma_correction))
+    # if not 500 < r < image.shape[0]/2: raise ValueError("Ridge radius is not within expected range")
 
+    from matplotlib import pyplot as plt
+    from skimage.draw import circle_perimeter
+    fig, axes = plt.subplots(1,3, figsize=(5,15))
+    axes[0].imshow(image, cmap="icefire")
     #determine indices of pixels that are inside the circle, padding of half distance to image edge
     y,x = np.indices(image.shape)
-    mask = ((x-xc)**2 + (y-yc)**2) < (r + abs(image.shape[0]-yc)/2)**2
+    #min distance to image edge
+    min_dist = np.min([xc, yc, image.shape[0]-yc, image.shape[1]-xc])
 
+    mask = ((x-xc)**2 + (y-yc)**2) < (r + abs(r-min_dist)/2)**2
+    axes[0].plot(circle_perimeter(yc,xc,r + abs(r-min_dist)/2), ",r")
+    axes[1].imshow(rim, cmap="icefire")
     # calculate mean of values outside of circle
     mean_outside = np.mean(image[~mask])
+    print(mean_outside)
     # subtract mean
     image = image - mean_outside
+    axes[2].imshow(image, cmap="icefire")
+    plt.show()
     # try:
     if not robust:
         radial_profile = _radial_profile(image, (yc,xc), pixelscale, max_rel_diff_to_circle)
